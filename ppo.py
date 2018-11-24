@@ -8,8 +8,6 @@ class PolicyGraph():
                  initial_mean_factor=0.1, initial_std=0.1, std=0.2, clip_action_space=False):
         with tf.variable_scope(scope_name):
             # Construct model
-            #self.conv1           = tf.layers.conv2d(input_states, filters=16, kernel_size=3, strides=1, activation=tf.nn.leaky_relu, padding="valid", name="conv1")
-            #self.conv2           = tf.layers.conv2d(self.conv1, filters=32, kernel_size=3, strides=1, activation=tf.nn.leaky_relu, padding="valid", name="conv2")
             self.conv1           = tf.layers.conv2d(input_states, filters=16, kernel_size=8, strides=4, activation=tf.nn.relu, padding="valid", name="conv1")
             self.conv2           = tf.layers.conv2d(self.conv1, filters=32, kernel_size=3, strides=2, activation=tf.nn.relu, padding="valid", name="conv2")
             self.shared_features = tf.layers.flatten(self.conv2, name="flatten")
@@ -20,17 +18,7 @@ class PolicyGraph():
                                                kernel_initializer=tf.initializers.variance_scaling(scale=initial_mean_factor),
                                                name="action_mean")
             self.action_mean = action_min + ((self.action_mean + 1) / 2) * (action_max - action_min)
-            #self.action_std  = tf.layers.dense(self.shared_features, num_actions,
-            #                                   activation=tf.nn.tanh,#activation=tf.nn.softplus,
-            #                                   kernel_initializer=tf.initializers.variance_scaling(scale=initial_std),#tf.zeros_initializer(),#tf.constant_initializer(np.log(np.exp(initial_std) - 1)),
-            #                                   name="action_std") # SoftPlus(x) = log(1 + exp(x))
-            #self.action_std  = ((self.action_std + 1) / 2) * (action_max - action_min)
-
             self.action_logstd = tf.get_variable("action_logstd", [num_actions], initializer=tf.zeros_initializer())
-
-            # Failsafe in case std = 0
-            #self.action_std  = tf.maximum(self.action_std, 1e-6)
-
 
             # Value branch V(s_t; θ)
             self.value = tf.layers.dense(self.shared_features, 1, activation=None, name="value")
@@ -62,9 +50,8 @@ class PPO():
         self.taken_actions = tf.placeholder(shape=(None, num_actions), dtype=tf.float32, name="taken_action_placeholder")
         self.input_states = tf.check_numerics(self.input_states, "Invalid value for self.input_states")
         self.taken_actions = tf.check_numerics(self.taken_actions, "Invalid value for self.taken_actions")
-        self.std_ph = tf.placeholder(shape=(), dtype=tf.float32, name="std_placeholder")
-        self.policy        = PolicyGraph(self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy", std=self.std_ph)
-        self.policy_old    = PolicyGraph(self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy_old", std=self.std_ph)
+        self.policy        = PolicyGraph(self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy")
+        self.policy_old    = PolicyGraph(self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy_old")
 
         # Create policy gradient train function
         self.returns   = tf.placeholder(shape=(None,), dtype=tf.float32, name="returns_placeholder")
@@ -124,7 +111,7 @@ class PPO():
             tf.summary.scalar("taken_actions_{}".format(i), tf.reduce_mean(self.taken_actions[:, i]))
             tf.summary.scalar("prob_ratio_{}".format(i), tf.reduce_mean(self.prob_ratio[i]))
             tf.summary.scalar("policy.action_mean_{}".format(i), tf.reduce_mean(self.policy.action_mean[:, i]))
-            tf.summary.scalar("policy.action_logstd_{}".format(i), tf.reduce_mean(self.policy.action_logstd[i]))
+            tf.summary.scalar("policy.action_std_{}".format(i), tf.reduce_mean(tf.exp(self.policy.action_logstd[i])))
         tf.summary.scalar("returns", tf.reduce_mean(self.returns))
         tf.summary.scalar("advantage", tf.reduce_mean(self.advantage))
         tf.summary.scalar("learning_rate", tf.reduce_mean(self.learning_rate))
@@ -152,35 +139,21 @@ class PPO():
         print("Model checkpoint saved to {}".format(model_checkpoint))
         
     def train(self, input_states, taken_actions, returns, advantage, learning_rate=1e-4, std=0.2):
-        assert(len(input_states.shape) == 4)
-        assert(len(taken_actions.shape) == 2)
-        assert(len(returns.shape) == 1)
-        assert(len(advantage.shape) == 1)
-        assert(input_states.shape[0] == taken_actions.shape[0])
-        assert(input_states.shape[0] == returns.shape[0])
-        assert(input_states.shape[0] == advantage.shape[0])
-        assert(input_states.shape[1] == 84)
-        assert(input_states.shape[2] == 84)
-        assert(input_states.shape[3] == 4)
-        assert(taken_actions.shape[1] == 3)
-
         r = self.sess.run([self.summary_merged, self.train_step, self.loss, self.policy_loss, self.value_loss, self.entropy_loss],
                           feed_dict={self.input_states: input_states,
                                      self.taken_actions: taken_actions,
                                      self.returns: returns,
                                      self.advantage: advantage,
-                                     self.learning_rate: learning_rate,
-                                     self.std_ph: std})
+                                     self.learning_rate: learning_rate})
         self.train_writer.add_summary(r[0], self.step_idx)
         self.step_idx += 1
         return r[2:]
         
-    def predict(self, input_states, use_old_policy=False, greedy=False, std=0.2):
+    def predict(self, input_states, use_old_policy=False, greedy=False):
         policy = self.policy_old if use_old_policy else self.policy
         action = policy.action_mean if greedy else policy.sampled_action
         return self.sess.run([action, policy.value],
-                             feed_dict={self.input_states: input_states,
-                                        self.std_ph: std})
+                             feed_dict={self.input_states: input_states})
 
     def write_to_summary(self, name, value):
         summary = tf.Summary()
