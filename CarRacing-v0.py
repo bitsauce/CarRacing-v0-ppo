@@ -27,6 +27,7 @@ def make_env():
 
 def evaluate(model, test_env, make_gif=False):
     total_reward = 0
+    test_env.seed(0)
     initial_frame = test_env.reset()
     frame_stack = FrameStack(initial_frame, preprocess_fn=preprocess_frame)
     done = False
@@ -39,9 +40,12 @@ def evaluate(model, test_env, make_gif=False):
         rendered_frames.append(test_env.render(mode="rgb_array"))
         total_reward += reward
         frame_stack.add_frame(frame)
-        time.sleep(0.016)
+        # time.sleep(0.016)
     if make_gif:
-        imageio.mimsave("./gifs/step{}.gif".format(model.step_idx), rendered_frames)
+        try: 
+            os.makedirs("./gifs/{}/run{}".format(env_name, model.run_idx))
+        finally:
+            imageio.mimsave("./gifs/{}/run{}/step{}.gif".format(env_name, model.run_idx, model.step_idx), rendered_frames, fps=30)
     return total_reward
 
 def train():
@@ -70,10 +74,10 @@ def train():
 
     # Create model
     print("Creating model")
-    model_checkpoint = None#"./models/CarRacing-v0/run2/episode0_step455000.ckpt"
+    model_checkpoint = None
     model = PPO(num_actions, input_shape, action_min, action_max, ppo_epsilon,
-                value_scale=0.5, entropy_scale=0.0001,
-                model_checkpoint=model_checkpoint, model_name="CarRacing-v0")
+                value_scale=0.5, entropy_scale=0.01,
+                model_checkpoint=model_checkpoint, model_name=env_name)
 
     if training:
         print("Creating environments")
@@ -153,7 +157,7 @@ def train():
                 # Optimize network
                 model.train(states[mb_idx], taken_actions[mb_idx],
                             returns[mb_idx], advantages[mb_idx],
-                            learning_rate=learning_rate, std=std)
+                            learning_rate=learning_rate)
 
             # Save model
             global_step += 1
