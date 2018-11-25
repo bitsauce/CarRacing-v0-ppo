@@ -42,10 +42,9 @@ def evaluate(model, test_env, make_gif=False):
         frame_stack.add_frame(frame)
         # time.sleep(0.016)
     if make_gif:
-        try: 
-            os.makedirs("./gifs/{}/run{}".format(env_name, model.run_idx))
-        finally:
-            imageio.mimsave("./gifs/{}/run{}/step{}.gif".format(env_name, model.run_idx, model.step_idx), rendered_frames, fps=30)
+        gif_dir = "./gifs/{}/run{}".format(env_name, model.run_idx)
+        if not os.path.isdir(gif_dir): os.makedirs(gif_dir)
+        imageio.mimsave("./gifs/{}/run{}/step{}.gif".format(env_name, model.run_idx, model.step_idx), rendered_frames, fps=30)
     return total_reward
 
 def train():
