@@ -11,13 +11,13 @@ import tensorflow as tf
 from utils import FrameStack, Scheduler, compute_returns, compute_gae
 from ppo import PPO
 from vec_env.subproc_vec_env import SubprocVecEnv
-import imageio
+import cv2
 
 env_name = "CarRacing-v0"
 
 def preprocess_frame(frame):
     frame = frame[:-12, 6:-6] # Crop to 84x84
-    frame = np.dot(frame[..., 0:3], [0.299, 0.587, 0.114])
+    #frame = np.dot(frame[..., 0:3], [0.299, 0.587, 0.114])
     frame = frame / 255.0
     frame = frame * 2 - 1
     return frame
@@ -25,26 +25,30 @@ def preprocess_frame(frame):
 def make_env():
     return gym.make(env_name)
 
-def evaluate(model, test_env, make_gif=False):
+def evaluate(model, test_env, make_video=False):
     total_reward = 0
     test_env.seed(0)
     initial_frame = test_env.reset()
     frame_stack = FrameStack(initial_frame, preprocess_fn=preprocess_frame)
+    rendered_frame = test_env.render(mode="rgb_array")
     done = False
-    rendered_frames = []
+    if make_video:
+        video_dir = "./videos/{}/run{}".format(model.model_name, model.run_idx)
+        if not os.path.isdir(video_dir): os.makedirs(video_dir)
+        video_writer = cv2.VideoWriter("./videos/{}/run{}/step{}.avi".format(model.model_name, model.run_idx, model.step_idx),
+                                       cv2.VideoWriter_fourcc(*"MPEG"), 30,
+                                       (rendered_frame.shape[1], rendered_frame.shape[0]))
     while not done:
         # Predict action given state: π(a_t | s_t; θ)
-        state = frame_stack.get_state()
+        state = np.reshape(np.transpose(frame_stack.get_state(), [0, 1, 3, 2]), (84, 84, 12))
         action, _ = model.predict(np.expand_dims(state, axis=0), greedy=False)
         frame, reward, done, _ = test_env.step(action[0])
-        rendered_frames.append(test_env.render(mode="rgb_array"))
+        rendered_frame = test_env.render(mode="rgb_array")
         total_reward += reward
         frame_stack.add_frame(frame)
+        if make_video: video_writer.write(cv2.cvtColor(rendered_frame, cv2.COLOR_RGB2BGR))
         # time.sleep(0.016)
-    if make_gif:
-        gif_dir = "./gifs/{}/run{}".format(env_name, model.run_idx)
-        if not os.path.isdir(gif_dir): os.makedirs(gif_dir)
-        imageio.mimsave("./gifs/{}/run{}/step{}.gif".format(env_name, model.run_idx, model.step_idx), rendered_frames, fps=30)
+    if make_video: video_writer.release()
     return total_reward
 
 def train():
@@ -66,7 +70,7 @@ def train():
 
     # Environment constants
     frame_stack_size = 4
-    input_shape      = (84, 84, frame_stack_size)
+    input_shape      = (84, 84, frame_stack_size * 3)
     num_actions      = test_env.action_space.shape[0]
     action_min       = np.array([-1.0, 0.0, 0.0])
     action_max       = np.array([ 1.0, 1.0, 1.0])
@@ -76,7 +80,7 @@ def train():
     model_checkpoint = None
     model = PPO(num_actions, input_shape, action_min, action_max, ppo_epsilon,
                 value_scale=0.5, entropy_scale=0.01,
-                model_checkpoint=model_checkpoint, model_name=env_name)
+                model_checkpoint=model_checkpoint, model_name="CarRacing-v0-rgb-framestack")
 
     if training:
         print("Creating environments")
@@ -88,11 +92,11 @@ def train():
         frame_stacks = [FrameStack(initial_frames[i], preprocess_fn=preprocess_frame) for i in range(num_envs)]
 
         print("Training loop")
-        global_step = 0
         while True:
+            global_step = model.step_idx // num_epochs
             if global_step % eval_interval == 0:
                 print("Running evaluation...")
-                avg_reward = evaluate(model, test_env, make_gif=True)
+                avg_reward = evaluate(model, test_env, make_video=True)
                 model.write_to_summary("eval_avg_reward", avg_reward)
 
             # While there are running environments
@@ -104,7 +108,7 @@ def train():
             for _ in range(t_max):
                 # Predict and value action given state
                 # π(a_t | s_t; θ_old)
-                states_t = [frame_stacks[i].get_state() for i in range(num_envs)]
+                states_t = [np.reshape(np.transpose(frame_stacks[i].get_state(), [0, 1, 3, 2]), (84, 84, 12)) for i in range(num_envs)]
                 actions_t, values_t = model.predict(states_t, use_old_policy=True)
 
                 # Sample action from a Gaussian distribution
@@ -113,7 +117,7 @@ def train():
                 envs.get_images() # render
                 
                 # Store state, action and reward
-                states.append(states_t)                      # [T, N, 84, 84, 1]
+                states.append(states_t)                      # [T, N, 84, 84, 4 * 3]
                 taken_actions.append(actions_t)              # [T, N, 3]
                 values.append(np.squeeze(values_t, axis=-1)) # [T, N]
                 rewards.append(rewards_t)                    # [T, N]
@@ -129,8 +133,8 @@ def train():
                         frame_stacks[i].add_frame(frames[i])
 
             # Calculate last values (bootstrap values)
-            states_last = [frame_stacks[i].get_state() for i in range(num_envs)]
-            last_values = np.squeeze(model.predict(states_last)[-1], axis=-1) # [N]
+            states_last = [np.reshape(np.transpose(frame_stacks[i].get_state(), [0, 1, 3, 2]), (84, 84, 12)) for i in range(num_envs)]
+            last_values = np.squeeze(model.predict(states_last, use_old_policy=True)[-1], axis=-1) # [N]
 
             # Compute returns
             returns = compute_returns(rewards, last_values, dones, discount_factor)
@@ -142,7 +146,7 @@ def train():
             advantages = (advantages - np.mean(advantages)) / np.std(advantages)
 
             # Flatten arrays
-            states        = np.array(states).reshape((-1, *input_shape))       # [T x N, 84, 84, 1]
+            states        = np.array(states).reshape((-1, *input_shape))       # [T x N, 84, 84, 4 * 3]
             taken_actions = np.array(taken_actions).reshape((-1, num_actions)) # [T x N, 3]
             returns       = returns.flatten()                                  # [T x N]
             advantages    = advantages.flatten()                               # [T X N]
@@ -159,8 +163,7 @@ def train():
                             learning_rate=learning_rate)
 
             # Save model
-            global_step += 1
-            if global_step % save_interval == 0:
+            if (global_step + 1) % save_interval == 0:
                 model.save()
     
     # Training complete, evaluate model

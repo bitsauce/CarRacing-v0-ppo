@@ -2,15 +2,14 @@ import tensorflow as tf
 import numpy as np
 import re
 import os
-import shutil
 
 class PolicyGraph():
     def __init__(self, input_states, taken_actions, num_actions, action_min, action_max, scope_name,
                  initial_mean_factor=0.1, clip_action_space=False):
         with tf.variable_scope(scope_name):
             # Construct model
-            self.conv1           = tf.layers.conv2d(input_states, filters=16, kernel_size=8, strides=4, activation=tf.nn.leaky_relu, padding="valid", name="conv1")
-            self.conv2           = tf.layers.conv2d(self.conv1, filters=32, kernel_size=3, strides=2, activation=tf.nn.leaky_relu, padding="valid", name="conv2")
+            self.conv1           = tf.layers.conv2d(input_states, filters=16, kernel_size=8, strides=4, activation=tf.nn.relu, padding="valid", name="conv1")
+            self.conv2           = tf.layers.conv2d(self.conv1, filters=32, kernel_size=3, strides=2, activation=tf.nn.relu, padding="valid", name="conv2")
             self.shared_features = tf.layers.flatten(self.conv2, name="flatten")
             
             # Policy branch π(a_t | s_t; θ)
@@ -120,41 +119,28 @@ class PPO():
         tf.summary.scalar("learning_rate", tf.reduce_mean(self.learning_rate))
         self.summary_merged = tf.summary.merge_all()
         
-        # Load model checkpoint
+        # Load model checkpoint if provided
         self.model_name = model_name
         self.saver = tf.train.Saver()
-
-        self.model_dir = "./models/{}".format(self.model_name)
-        self.log_dir   = "./logs/{}".format(self.model_name)
-        self.video_dir = "./videos/{}".format(self.model_name)
-        if model_checkpoint is None and os.path.isdir(self.model_dir):
-            answer = input("{} exists. Do you wish to resume training? (Y/N) ".format(self.model_dir))
-            if answer.upper() == "Y":
-                model_checkpoint = tf.train.latest_checkpoint(self.model_dir)
-            else:
-                answer = input("Do you wish delete and restart training? (Y/N) ")
-                if answer.upper() != "Y":
-                    raise Exception("Trained model exists in destination {}." +
-                                    "Please delete it or change model_name and try again".format(self.model_dir))
-
         if model_checkpoint:
+            self.run_idx = int(re.findall(r"/run\d+", model_checkpoint)[0][len("/run"):])
             self.step_idx = int(re.findall(r"/step\d+", model_checkpoint)[0][len("/step"):])
             self.saver.restore(self.sess, model_checkpoint)
             print("Model checkpoint restored from {}".format(model_checkpoint))
         else:
+            self.run_idx = 0
+            while os.path.isdir("./logs/{}/run{}".format(self.model_name, self.run_idx)):
+                self.run_idx += 1
             self.step_idx = 0
-            for d in [self.model_dir, self.log_dir, self.video_dir]:
-                if os.path.isdir(d): shutil.rmtree(d)
-                os.makedirs(d)
-
-        self.train_writer = tf.summary.FileWriter(self.log_dir, self.sess.graph)
+            os.makedirs("./models/{}/run{}".format(self.model_name, self.run_idx))
+        self.train_writer = tf.summary.FileWriter("./logs/{}/run{}".format(self.model_name, self.run_idx), self.sess.graph)
         
     def save(self):
-        model_checkpoint = os.path.join(self.model_dir, "step{}.ckpt".format(self.step_idx))
+        model_checkpoint = "./models/{}/run{}/step{}.ckpt".format(self.model_name, self.run_idx, self.step_idx)
         self.saver.save(self.sess, model_checkpoint)
         print("Model checkpoint saved to {}".format(model_checkpoint))
         
-    def train(self, input_states, taken_actions, returns, advantage, learning_rate=1e-4):
+    def train(self, input_states, taken_actions, returns, advantage, learning_rate=1e-4, std=0.2):
         r = self.sess.run([self.summary_merged, self.train_step, self.loss, self.policy_loss, self.value_loss, self.entropy_loss],
                           feed_dict={self.input_states: input_states,
                                      self.taken_actions: taken_actions,

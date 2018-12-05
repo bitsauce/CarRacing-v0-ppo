@@ -5,14 +5,15 @@ import os
 import shutil
 
 class PolicyGraph():
-    def __init__(self, input_states, taken_actions, num_actions, action_min, action_max, scope_name,
+    def __init__(self, input_images, input_states, taken_actions, num_actions, action_min, action_max, scope_name,
                  initial_mean_factor=0.1, clip_action_space=False):
         with tf.variable_scope(scope_name):
             # Construct model
-            self.conv1           = tf.layers.conv2d(input_states, filters=16, kernel_size=8, strides=4, activation=tf.nn.leaky_relu, padding="valid", name="conv1")
+            self.conv1           = tf.layers.conv2d(input_images, filters=16, kernel_size=8, strides=4, activation=tf.nn.leaky_relu, padding="valid", name="conv1")
             self.conv2           = tf.layers.conv2d(self.conv1, filters=32, kernel_size=3, strides=2, activation=tf.nn.leaky_relu, padding="valid", name="conv2")
-            self.shared_features = tf.layers.flatten(self.conv2, name="flatten")
-            
+            self.image_features  = tf.layers.flatten(self.conv2, name="flatten")
+            self.shared_features = tf.concat([self.image_features, input_states], axis=-1)
+
             # Policy branch π(a_t | s_t; θ)
             self.action_mean = tf.layers.dense(self.shared_features, num_actions,
                                                activation=tf.nn.tanh,
@@ -44,17 +45,20 @@ class PolicyGraph():
             self.action_log_prob = tf.check_numerics(self.action_log_prob, "Invalid value for self.action_log_prob")
 
 class PPO():
-    def __init__(self, num_actions, input_shape, action_min, action_max,
+    def __init__(self, num_actions, input_image_shape, input_state_size,
+                 action_min, action_max,
                  epsilon=0.2, value_scale=0.5, entropy_scale=0.01,
                  model_checkpoint=None, model_name="ppo"):
         tf.reset_default_graph()
         
-        self.input_states  = tf.placeholder(shape=(None, *input_shape), dtype=tf.float32, name="input_state_placeholder")
-        self.taken_actions = tf.placeholder(shape=(None, num_actions), dtype=tf.float32, name="taken_action_placeholder")
-        self.input_states  = tf.check_numerics(self.input_states, "Invalid value for self.input_states")
+        self.input_images  = tf.placeholder(shape=(None, *input_image_shape), dtype=tf.float32, name="input_images_placeholder")
+        self.taken_actions = tf.placeholder(shape=(None, num_actions), dtype=tf.float32, name="taken_actions_placeholder")
+        self.input_states  = tf.placeholder(shape=(None, input_state_size), dtype=tf.float32, name="input_states_placeholder")
+        self.input_images  = tf.check_numerics(self.input_images, "Invalid value for self.input_images")
         self.taken_actions = tf.check_numerics(self.taken_actions, "Invalid value for self.taken_actions")
-        self.policy        = PolicyGraph(self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy")
-        self.policy_old    = PolicyGraph(self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy_old")
+        self.input_states  = tf.check_numerics(self.input_states, "Invalid value for self.input_states")
+        self.policy        = PolicyGraph(self.input_images, self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy")
+        self.policy_old    = PolicyGraph(self.input_images, self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy_old")
 
         # Create policy gradient train function
         self.returns   = tf.placeholder(shape=(None,), dtype=tf.float32, name="returns_placeholder")
@@ -65,7 +69,7 @@ class PPO():
         # r_t(θ) = exp( log ( π(a_t | s_t; θ) /     π(a_t | s_t; θ_old) ) )
         # r_t(θ) = π(a_t | s_t; θ) / π(a_t | s_t; θ_old)
         self.prob_ratio = tf.exp(self.policy.action_log_prob - self.policy_old.action_log_prob)
-        
+
         # Validate values
         self.returns = tf.check_numerics(self.returns, "Invalid value for self.returns")
         self.advantage = tf.check_numerics(self.advantage, "Invalid value for self.advantage")
@@ -138,7 +142,7 @@ class PPO():
                                     "Please delete it or change model_name and try again".format(self.model_dir))
 
         if model_checkpoint:
-            self.step_idx = int(re.findall(r"/step\d+", model_checkpoint)[0][len("/step"):])
+            self.step_idx = int(re.findall(r"[/\\]step\d+", model_checkpoint)[0][len("/step"):])
             self.saver.restore(self.sess, model_checkpoint)
             print("Model checkpoint restored from {}".format(model_checkpoint))
         else:
@@ -154,9 +158,10 @@ class PPO():
         self.saver.save(self.sess, model_checkpoint)
         print("Model checkpoint saved to {}".format(model_checkpoint))
         
-    def train(self, input_states, taken_actions, returns, advantage, learning_rate=1e-4):
+    def train(self, input_images, input_states, taken_actions, returns, advantage, learning_rate=1e-4):
         r = self.sess.run([self.summary_merged, self.train_step, self.loss, self.policy_loss, self.value_loss, self.entropy_loss],
-                          feed_dict={self.input_states: input_states,
+                          feed_dict={self.input_images: input_images,
+                                     self.input_states: input_states,
                                      self.taken_actions: taken_actions,
                                      self.returns: returns,
                                      self.advantage: advantage,
@@ -165,11 +170,12 @@ class PPO():
         self.step_idx += 1
         return r[2:]
         
-    def predict(self, input_states, use_old_policy=False, greedy=False):
+    def predict(self, input_images, input_states, use_old_policy=False, greedy=False):
         policy = self.policy_old if use_old_policy else self.policy
         action = policy.action_mean if greedy else policy.sampled_action
-        return self.sess.run([action, policy.value],
-                             feed_dict={self.input_states: input_states})
+        return self.sess.run([action, policy.value, policy.image_features],
+                             feed_dict={self.input_images: input_images,
+                                        self.input_states: input_states})
 
     def write_to_summary(self, name, value):
         summary = tf.Summary()
@@ -178,3 +184,6 @@ class PPO():
 
     def update_old_policy(self):
         self.sess.run(self.update_op)
+
+    def get_feature_shape(self):
+        return self.policy.image_features.shape[1:]
