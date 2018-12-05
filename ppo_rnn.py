@@ -6,13 +6,21 @@ import shutil
 
 class PolicyGraph():
     def __init__(self, input_images, input_states, taken_actions, num_actions, action_min, action_max, scope_name,
-                 initial_mean_factor=0.1, clip_action_space=False):
+                 initial_mean_factor=0.1, clip_action_space=False, rnn_use_features=False):
         with tf.variable_scope(scope_name):
             # Construct model
             self.conv1           = tf.layers.conv2d(input_images, filters=16, kernel_size=8, strides=4, activation=tf.nn.leaky_relu, padding="valid", name="conv1")
             self.conv2           = tf.layers.conv2d(self.conv1, filters=32, kernel_size=3, strides=2, activation=tf.nn.leaky_relu, padding="valid", name="conv2")
             self.image_features  = tf.layers.flatten(self.conv2, name="flatten")
-            self.shared_features = tf.concat([self.image_features, input_states], axis=-1)
+
+            if rnn_use_features:
+                self.concat_features = tf.concat([self.image_features, tf.reshape(input_states, tf.shape(self.image_features))], axis=-1)
+                self.shared_features = tf.layers.dense(self.concat_features, 1024,
+                                                       activation=tf.nn.leaky_relu,
+                                                       kernel_initializer=tf.initializers.variance_scaling(scale=initial_mean_factor),
+                                                       name="shared_features")
+            else:
+                self.shared_features = tf.concat([self.image_features, input_states], axis=-1)
 
             # Policy branch π(a_t | s_t; θ)
             self.action_mean = tf.layers.dense(self.shared_features, num_actions,
@@ -57,8 +65,8 @@ class PPO():
         self.input_images  = tf.check_numerics(self.input_images, "Invalid value for self.input_images")
         self.taken_actions = tf.check_numerics(self.taken_actions, "Invalid value for self.taken_actions")
         self.input_states  = tf.check_numerics(self.input_states, "Invalid value for self.input_states")
-        self.policy        = PolicyGraph(self.input_images, self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy")
-        self.policy_old    = PolicyGraph(self.input_images, self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy_old")
+        self.policy        = PolicyGraph(self.input_images, self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy", rnn_use_features=input_state_size == None)
+        self.policy_old    = PolicyGraph(self.input_images, self.input_states, self.taken_actions, num_actions, action_min, action_max, "policy_old", rnn_use_features=input_state_size == None)
 
         # Create policy gradient train function
         self.returns   = tf.placeholder(shape=(None,), dtype=tf.float32, name="returns_placeholder")
