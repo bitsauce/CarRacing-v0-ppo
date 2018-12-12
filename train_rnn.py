@@ -8,7 +8,7 @@ import numpy as np
 from skimage import transform
 from IPython.display import display, clear_output
 import tensorflow as tf
-from utils import FrameStack, Scheduler, compute_returns, compute_gae
+from utils import FrameStack, compute_returns, compute_gae
 from ppo_rnn import PPO
 from vec_env.subproc_vec_env import SubprocVecEnv
 import cv2
@@ -62,7 +62,7 @@ def train():
     test_env = gym.make(env_name)
 
     # Traning parameters
-    lr_scheduler    = Scheduler(initial_value=3e-4, interval=10000, decay_factor=0.85)
+    lr_scheduler    = lambda step_idx: 3e-4 * 0.85 ** (step_idx // 10000)
     discount_factor = 0.99
     gae_lambda      = 0.95
     ppo_epsilon     = 0.2
@@ -85,7 +85,7 @@ def train():
     print("Creating model")
     model = PPO(num_actions, input_shape, None, action_min, action_max, ppo_epsilon,
                 value_scale=0.5, entropy_scale=0.01,
-                model_name="CarRacing-v0-rnn")
+                model_name="CarRacing-v0-rnn-v2")
 
     if training:
         print("Creating environments")
@@ -129,10 +129,10 @@ def train():
                     # Reset environment's recurrent feature if done
                     if dones_t[i]:
                         for _ in range(frame_stack_size):
-                            frame_stacks[i].add_frame(frames[i])
+                            frame_stacks[i].add_frame(frames_t[i])
                         features_t[i] = np.zeros(model.get_feature_shape())
                     else:
-                        frame_stacks[i].add_frame(frames[i])
+                        frame_stacks[i].add_frame(frames_t[i])
 
             # Calculate last values (bootstrap values)
             states_last = [frame_stacks[i].get_state() for i in range(num_envs)]
@@ -177,7 +177,7 @@ def train():
                 print("Training (step {})...".format(model.step_idx))
                 model.train(states[mb_idx], prev_features[mb_idx], taken_actions[mb_idx],
                             returns[mb_idx], advantages[mb_idx],
-                            learning_rate=np.maximum(lr_scheduler.get_value(), 1e-6))
+                            learning_rate=lr_scheduler)
 
 
     # Training complete, evaluate model

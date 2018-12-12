@@ -138,7 +138,7 @@ class PPO():
                                     "Please delete it or change model_name and try again".format(self.model_dir))
 
         if model_checkpoint:
-            self.step_idx = int(re.findall(r"/step\d+", model_checkpoint)[0][len("/step"):])
+            self.step_idx = int(re.findall(r"[/\\]step\d+", model_checkpoint)[0][len("/step"):])
             self.saver.restore(self.sess, model_checkpoint)
             print("Model checkpoint restored from {}".format(model_checkpoint))
         else:
@@ -160,7 +160,7 @@ class PPO():
                                      self.taken_actions: taken_actions,
                                      self.returns: returns,
                                      self.advantage: advantage,
-                                     self.learning_rate: learning_rate})
+                                     self.learning_rate: learning_rate(self.step_idx) if callable(learning_rate) else learning_rate})
         self.train_writer.add_summary(r[0], self.step_idx)
         self.step_idx += 1
         return r[2:]

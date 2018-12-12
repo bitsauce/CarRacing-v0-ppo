@@ -14,11 +14,7 @@ class PolicyGraph():
             self.image_features  = tf.layers.flatten(self.conv2, name="flatten")
 
             if rnn_use_features:
-                self.concat_features = tf.concat([self.image_features, tf.reshape(input_states, tf.shape(self.image_features))], axis=-1)
-                self.shared_features = tf.layers.dense(self.concat_features, 1024,
-                                                       activation=tf.nn.leaky_relu,
-                                                       kernel_initializer=tf.initializers.variance_scaling(scale=initial_mean_factor),
-                                                       name="shared_features")
+                self.shared_features = tf.concat([self.image_features, tf.reshape(input_states, tf.shape(self.image_features))], axis=-1)
             else:
                 self.shared_features = tf.concat([self.image_features, input_states], axis=-1)
 
@@ -173,7 +169,7 @@ class PPO():
                                      self.taken_actions: taken_actions,
                                      self.returns: returns,
                                      self.advantage: advantage,
-                                     self.learning_rate: learning_rate})
+                                     self.learning_rate: learning_rate(self.step_idx) if callable(learning_rate) else learning_rate})
         self.train_writer.add_summary(r[0], self.step_idx)
         self.step_idx += 1
         return r[2:]

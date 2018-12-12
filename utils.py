@@ -19,20 +19,6 @@ class FrameStack():
     def get_state(self):
         return self.state
 
-class Scheduler():
-    def __init__(self, initial_value, interval, decay_factor):
-        self.interval = self.counter = interval
-        self.decay_factor = decay_factor
-        self.value_factor = 1
-        self.value = initial_value
-        
-    def get_value(self):
-        self.counter -= 1
-        if self.counter < 0:
-            self.counter = self.interval
-            self.value *= self.decay_factor
-        return self.value
-
 def discount(x, gamma):
     return scipy.signal.lfilter([1], [1, -gamma], x[::-1], axis=0)[::-1]
 

@@ -61,18 +61,18 @@ def train():
 
     # Traning parameters
     lr_scheduler    = Scheduler(initial_value=3e-4, interval=10000, decay_factor=0.85)
-    discount_factor = 0.99
-    gae_lambda      = 0.95
-    ppo_epsilon     = 0.2
-    t_max           = 128
-    num_epochs      = 10
-    batch_size      = 128
+    discount_factor = 0.99 # gamma
+    gae_lambda      = 0.95 # lambda
+    ppo_epsilon     = 0.2  # epsilon
+    t_max           = 128  # T
+    num_epochs      = 10   # K
+    batch_size      = 128  # M
     save_interval   = 1000
     eval_interval   = 200
     training        = True
 
     # Environment constants
-    num_envs         = 8
+    num_envs         = 8 # N
     frame_stack_size = 4
     input_shape      = (84, 84, frame_stack_size)
     num_actions      = test_env.action_space.shape[0]
@@ -83,7 +83,7 @@ def train():
     print("Creating model")
     model = PPO(num_actions, input_shape, action_min, action_max, ppo_epsilon,
                 value_scale=0.5, entropy_scale=0.01,
-                model_name="CarRacing-v0-framestack-decaying-lr")
+                model_name="CarRacing-v0-framestack-no-scale")
 
     if training:
         print("Creating environments")
