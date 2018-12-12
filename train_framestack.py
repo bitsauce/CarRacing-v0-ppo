@@ -8,7 +8,7 @@ import numpy as np
 from skimage import transform
 from IPython.display import display, clear_output
 import tensorflow as tf
-from utils import FrameStack, Scheduler, compute_returns, compute_gae
+from utils import FrameStack, compute_returns, compute_gae
 from ppo import PPO
 from vec_env.subproc_vec_env import SubprocVecEnv
 import cv2
@@ -60,7 +60,7 @@ def train():
     test_env = gym.make(env_name)
 
     # Traning parameters
-    lr_scheduler    = Scheduler(initial_value=3e-4, interval=10000, decay_factor=0.85)
+    lr_scheduler    = lambda step_idx: 3e-4 * 0.85 ** (step_idx // 10000)
     discount_factor = 0.99 # gamma
     gae_lambda      = 0.95 # lambda
     ppo_epsilon     = 0.2  # epsilon
@@ -83,7 +83,7 @@ def train():
     print("Creating model")
     model = PPO(num_actions, input_shape, action_min, action_max, ppo_epsilon,
                 value_scale=0.5, entropy_scale=0.01,
-                model_name="CarRacing-v0-framestack-no-scale")
+                model_name="CarRacing-v0-framestack")
 
     if training:
         print("Creating environments")
