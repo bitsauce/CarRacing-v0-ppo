@@ -1,17 +1,14 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import os
 import re
 
 # -------- Load data -----------
-file_names = ["run_CarRacing-v0-framestack-tag-eval_avg_reward.csv",
-              "run_CarRacing-v0-single-frame-tag-eval_avg_reward.csv",
-              "run_CarRacing-v0-with-measurements-tag-eval_avg_reward.csv",
-              "run_CarRacing-v0-recurrent-tag-eval_avg_reward.csv",
-              "run_CarRacing-v0-framestack-no-scale-tag-eval_avg_reward.csv"]
+data_dir = "eval_value_error"
 X, Y, names = [], [], []
-for file_name in file_names:
-    eval_avg_reward = pd.read_csv(file_name)
+for file_name in os.listdir(data_dir):
+    eval_avg_reward = pd.read_csv(os.path.join(data_dir, file_name))
     x = np.array(eval_avg_reward["Step"])
     y = np.array(eval_avg_reward["Value"])
     if len(x) > 71000 // 200:
@@ -19,7 +16,7 @@ for file_name in file_names:
         y = y[:71000 // 200]
     X.append(x)
     Y.append(y)
-    m = re.search("run_CarRacing-v0-(.+?)-tag-eval_avg_reward", file_name)
+    m = re.search("run_CarRacing-v0-(.+?)-tag-*", file_name)
     if m: names.append(m.group(1))
     else: names.append(file_name)
 
@@ -100,5 +97,5 @@ for i, (x, y, name) in enumerate(zip(X, Y, names)):
     plt.plot(x, means, color=np.array(tableau20[i*2]) / 255.0, label=name)
 
 plt.legend(loc=(0.05, 0.75))
-plt.savefig("carracing_eval.png", bbox_inches="tight")
-#plt.show()
+plt.savefig("{}.png".format(data_dir), bbox_inches="tight")
+plt.show()
