@@ -55,7 +55,6 @@ def evaluate(model, test_env, discount_factor, frame_stack_size, make_video=Fals
     value_error = np.mean(np.square(np.array(values) - returns))
     return total_reward, value_error
 
-
 def train():
     # Create test env
     print("Creating test environment")
@@ -63,18 +62,18 @@ def train():
 
     # Traning parameters
     lr_scheduler    = lambda step_idx: 3e-4 * 0.85 ** (step_idx // 10000)
-    discount_factor = 0.99
-    gae_lambda      = 0.95
-    ppo_epsilon     = 0.2
-    t_max           = 128
-    num_epochs      = 10
-    batch_size      = 128
+    discount_factor = 0.99 # gamma
+    gae_lambda      = 0.95 # lambda
+    ppo_epsilon     = 0.2  # epsilon
+    t_max           = 128  # T
+    num_epochs      = 10   # K
+    batch_size      = 128  # M
     save_interval   = 1000
     eval_interval   = 200
     training        = True
 
     # Environment constants
-    num_envs         = 8
+    num_envs         = 8 # N
     frame_stack_size = 1
     input_shape      = (84, 84, frame_stack_size)
     num_actions      = test_env.action_space.shape[0]
@@ -178,7 +177,6 @@ def train():
                 model.train(states[mb_idx], prev_features[mb_idx], taken_actions[mb_idx],
                             returns[mb_idx], advantages[mb_idx],
                             learning_rate=lr_scheduler)
-
 
     # Training complete, evaluate model
     avg_reward = evaluate(model, test_env, 10)

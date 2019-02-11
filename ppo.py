@@ -1,12 +1,38 @@
-import tensorflow as tf
-import numpy as np
-import re
 import os
+import re
 import shutil
 
+import numpy as np
+import tensorflow as tf
+
+
 class PolicyGraph():
-    def __init__(self, input_states, taken_actions, num_actions, action_min, action_max, scope_name,
+    """
+        Manages the policy computation graph
+    """
+
+    def __init__(self, input_states, taken_actions,
+                 num_actions, action_min, action_max, scope_name,
                  initial_mean_factor=0.1, clip_action_space=False):
+        """
+            input_states [batch_size, width, height, depth]:
+                Input images to predict actions for
+            taken_actions [batch_size, num_actions]:
+                Actions taken by the old policy (used for training)
+            num_actions (int):
+                Number of continous actions to output
+            action_min [num_actions]:
+                Minimum possible value for the respective action
+            action_max [num_actions]:
+                Maximum possible value for the respective action
+            scope_name (string):
+                Variable scope name for the policy graph
+            initial_mean_factor (float):
+                Variance scaling factor for the action mean prediction layer
+            clip_action_space (bool):
+                When True, output actions are clipped to [action_min, action_max] space
+        """
+
         with tf.variable_scope(scope_name):
             # Construct model
             self.conv1           = tf.layers.conv2d(input_states, filters=16, kernel_size=8, strides=4, activation=tf.nn.leaky_relu, padding="valid", name="conv1")
@@ -44,9 +70,34 @@ class PolicyGraph():
             self.action_log_prob = tf.check_numerics(self.action_log_prob, "Invalid value for self.action_log_prob")
 
 class PPO():
-    def __init__(self, num_actions, input_shape, action_min, action_max,
+    """
+        Proximal policy gradient model class
+    """
+
+    def __init__(self, input_shape, num_actions, action_min, action_max,
                  epsilon=0.2, value_scale=0.5, entropy_scale=0.01,
                  model_checkpoint=None, model_name="ppo"):
+        """
+            input_shape [3]:
+                Shape of input images as a tuple (width, height, depth)
+            num_actions (int):
+                Number of continous actions to output
+            action_min [num_actions]:
+                Minimum possible value for the respective action
+            action_max [num_actions]:
+                Maximum possible value for the respective action
+            epsilon (float):
+                PPO clipping parameter
+            value_scale (float):
+                Value loss scale factor
+            entropy_scale (float):
+                Entropy loss scale factor
+            model_checkpoint (string):
+                Path of model checkpoint file to load from
+            model_name (string):
+                Name of the model
+        """
+
         tf.reset_default_graph()
         
         self.input_states  = tf.placeholder(shape=(None, *input_shape), dtype=tf.float32, name="input_state_placeholder")
@@ -100,7 +151,9 @@ class PPO():
         self.update_op = tf.group([dst.assign(src) for src, dst in zip(policy_params, policy_old_params)])
 
         # Create session
-        self.sess = tf.Session()
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=config)
 
         # Run the initializer
         self.sess.run(tf.global_variables_initializer())
@@ -128,14 +181,11 @@ class PPO():
         self.log_dir   = "./logs/{}".format(self.model_name)
         self.video_dir = "./videos/{}".format(self.model_name)
         if model_checkpoint is None and os.path.isdir(self.model_dir):
-            answer = input("{} exists. Do you wish to resume training? (Y/N) ".format(self.model_dir))
-            if answer.upper() == "Y":
+            answer = input("{} exists. Do you wish to continue (C) or restart training (R)? ".format(self.model_dir))
+            if answer.upper() == "C":
                 model_checkpoint = tf.train.latest_checkpoint(self.model_dir)
-            else:
-                answer = input("Do you wish delete and restart training? (Y/N) ")
-                if answer.upper() != "Y":
-                    raise Exception("Trained model exists in destination {}." +
-                                    "Please delete it or change model_name and try again".format(self.model_dir))
+            elif answer.upper() != "R":
+                raise Exception("There is already a model directory {}. Please delete it or change model_name and try again".format(self.model_dir))
 
         if model_checkpoint:
             self.step_idx = int(re.findall(r"[/\\]step\d+", model_checkpoint)[0][len("/step"):])

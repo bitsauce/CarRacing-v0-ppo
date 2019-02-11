@@ -108,7 +108,9 @@ class PPO():
         self.update_op = tf.group([dst.assign(src) for src, dst in zip(policy_params, policy_old_params)])
 
         # Create session
-        self.sess = tf.Session()
+        config = tf.ConfigProto()
+        config.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=config)
 
         # Run the initializer
         self.sess.run(tf.global_variables_initializer())

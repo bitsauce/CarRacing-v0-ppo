@@ -81,7 +81,7 @@ def train():
 
     # Create model
     print("Creating model")
-    model = PPO(num_actions, input_shape, action_min, action_max, ppo_epsilon,
+    model = PPO(input_shape, num_actions, action_min, action_max, ppo_epsilon,
                 value_scale=0.5, entropy_scale=0.01,
                 model_name="CarRacing-v0-framestack")
 
@@ -166,10 +166,10 @@ def train():
                 print("Training (step {})...".format(model.step_idx))
                 model.train(states[mb_idx], taken_actions[mb_idx],
                             returns[mb_idx], advantages[mb_idx],
-                            learning_rate=np.maximum(lr_scheduler.get_value(), 1e-6))
+                            learning_rate=lr_scheduler)
     
     # Training complete, evaluate model
-    avg_reward = evaluate(model, test_env, 10)
+    avg_reward = evaluate(model, test_env, discount_factor, frame_stack_size, make_video=True)
     print("Model achieved a final reward of:", avg_reward)
 
 if __name__ == "__main__":
