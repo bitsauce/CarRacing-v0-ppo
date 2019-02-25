@@ -1,17 +1,17 @@
-﻿import matplotlib.pyplot as plt
-import gym
-import os
-import time
+﻿import os
 import random
 import time
-import numpy as np
-from skimage import transform
-from IPython.display import display, clear_output
-import tensorflow as tf
-from utils import FrameStack, compute_returns, compute_gae
-from ppo import PPO
-from vec_env.subproc_vec_env import SubprocVecEnv
+
 import cv2
+import gym
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+from skimage import transform
+
+from ppo import PPO
+from utils import FrameStack, compute_gae, compute_returns
+from vec_env.subproc_vec_env import SubprocVecEnv
 
 env_name = "CarRacing-v0"
 
@@ -54,100 +54,108 @@ def evaluate(model, test_env, discount_factor, frame_stack_size, make_video=Fals
     value_error = np.mean(np.square(np.array(values) - returns))
     return total_reward, value_error
 
-def train():
+def train(params, model_name, save_interval=1000, eval_interval=200, record_episodes=True, restart=False):
     # Create test env
     print("Creating test environment")
     test_env = gym.make(env_name)
 
     # Traning parameters
-    lr_scheduler    = lambda step_idx: 3e-4 * 0.85 ** (step_idx // 10000)
-    discount_factor = 0.99 # gamma
-    gae_lambda      = 0.95 # lambda
-    ppo_epsilon     = 0.2  # epsilon
-    t_max           = 128  # T
-    num_epochs      = 10   # K
-    batch_size      = 128  # M
-    save_interval   = 1000
-    eval_interval   = 200
-    training        = True
+    initial_lr       = params["initial_lr"]
+    discount_factor  = params["discount_factor"]
+    gae_lambda       = params["gae_lambda"]
+    ppo_epsilon      = params["ppo_epsilon"]
+    value_scale      = params["value_scale"]
+    entropy_scale    = params["entropy_scale"]
+    horizon          = params["horizon"]
+    num_epochs       = params["num_epochs"]
+    batch_size       = params["batch_size"]
+    num_envs         = params["num_envs"]
+
+    # Traning parameters
+    lr_scheduler    = lambda step_idx: initial_lr * 0.85 ** (step_idx // 10000)
+
 
     # Environment constants
-    num_envs         = 8 # N
     frame_stack_size = 4
     input_shape      = (84, 84, frame_stack_size)
     num_actions      = test_env.action_space.shape[0]
-    action_min       = np.array([-1.0, 0.0, 0.0])
-    action_max       = np.array([ 1.0, 1.0, 1.0])
+    action_min       = test_env.action_space.low
+    action_max       = test_env.action_space.high
 
     # Create model
     print("Creating model")
-    model = PPO(input_shape, num_actions, action_min, action_max, ppo_epsilon,
-                value_scale=0.5, entropy_scale=0.01,
-                model_name="CarRacing-v0-framestack")
+    model = PPO(input_shape, num_actions, action_min, action_max, 
+                epsilon=ppo_epsilon,
+                value_scale=value_scale, entropy_scale=entropy_scale,
+                model_name=model_name)
 
-    if training:
-        print("Creating environments")
-        envs = SubprocVecEnv([make_env for _ in range(num_envs)])
+    print("Creating environments")
+    envs = SubprocVecEnv([make_env for _ in range(num_envs)])
 
-        initial_frames = envs.reset()
-        envs.get_images()
-        frame_stacks = [FrameStack(initial_frames[i], stack_size=frame_stack_size, preprocess_fn=preprocess_frame) for i in range(num_envs)]
+    initial_frames = envs.reset()
+    envs.get_images()
+    frame_stacks = [FrameStack(initial_frames[i], stack_size=frame_stack_size, preprocess_fn=preprocess_frame) for i in range(num_envs)]
 
-        print("Training loop")
-        while True:
-            # While there are running environments
-            states, taken_actions, values, rewards, dones = [], [], [], [], []
+    print("Training loop")
+    while True:
+        # While there are running environments
+        states, taken_actions, values, rewards, dones = [], [], [], [], []
+        
+        # Simulate game for some number of steps
+        for _ in range(horizon):
+            # Predict and value action given state
+            # π(a_t | s_t; θ_old)
+            states_t = [frame_stacks[i].get_state() for i in range(num_envs)]
+            actions_t, values_t = model.predict(states_t)
+
+            # Sample action from a Gaussian distribution
+            envs.step_async(actions_t)
+            frames, rewards_t, dones_t, _ = envs.step_wait()
+            envs.get_images() # render
             
-            # Simulate game for some number of steps
-            for _ in range(t_max):
-                # Predict and value action given state
-                # π(a_t | s_t; θ_old)
-                states_t = [frame_stacks[i].get_state() for i in range(num_envs)]
-                actions_t, values_t = model.predict(states_t, use_old_policy=True)
-
-                # Sample action from a Gaussian distribution
-                envs.step_async(actions_t)
-                frames, rewards_t, dones_t, _ = envs.step_wait()
-                envs.get_images() # render
-                
-                # Store state, action and reward
-                states.append(states_t)                      # [T, N, 84, 84, 4]
-                taken_actions.append(actions_t)              # [T, N, 3]
-                values.append(np.squeeze(values_t, axis=-1)) # [T, N]
-                rewards.append(rewards_t)                    # [T, N]
-                dones.append(dones_t)                        # [T, N]
-                
-                # Get new state
-                for i in range(num_envs):
-                    # Reset environment's frame stack if done
-                    if dones_t[i]:
-                        for _ in range(frame_stack_size):
-                            frame_stacks[i].add_frame(frames[i])
-                    else:
+            # Store state, action and reward
+            states.append(states_t)                      # [T, N, 84, 84, 4]
+            taken_actions.append(actions_t)              # [T, N, 3]
+            values.append(np.squeeze(values_t, axis=-1)) # [T, N]
+            rewards.append(rewards_t)                    # [T, N]
+            dones.append(dones_t)                        # [T, N]
+            
+            # Get new state
+            for i in range(num_envs):
+                # Reset environment's frame stack if done
+                if dones_t[i]:
+                    for _ in range(frame_stack_size):
                         frame_stacks[i].add_frame(frames[i])
+                else:
+                    frame_stacks[i].add_frame(frames[i])
 
-            # Calculate last values (bootstrap values)
-            states_last = [frame_stacks[i].get_state() for i in range(num_envs)]
-            last_values = np.squeeze(model.predict(states_last, use_old_policy=True)[1], axis=-1) # [N]
+        # Calculate last values (bootstrap values)
+        states_last = [frame_stacks[i].get_state() for i in range(num_envs)]
+        last_values = np.squeeze(model.predict(states_last)[1], axis=-1) # [N]
+        
+        advantages = compute_gae(rewards, values, last_values, dones, discount_factor, gae_lambda)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8) # Move down one line?
+        returns = advantages + values
+        # Flatten arrays
+        states        = np.array(states).reshape((-1, *input_shape))       # [T x N, 84, 84, 4]
+        taken_actions = np.array(taken_actions).reshape((-1, num_actions)) # [T x N, 3]
+        returns       = returns.flatten()                                  # [T x N]
+        advantages    = advantages.flatten()                               # [T X N]
 
-            # Compute returns
-            returns = compute_returns(rewards, last_values, dones, discount_factor)
-            
-            # Compute advantages
-            advantages = compute_gae(rewards, values, last_values, dones, discount_factor, gae_lambda)
+        T = len(rewards)
+        N = num_envs
+        assert states.shape == (T * N, input_shape[0], input_shape[1], frame_stack_size)
+        assert taken_actions.shape == (T * N, num_actions)
+        assert returns.shape == (T * N,)
+        assert advantages.shape == (T * N,)
 
-            # Normalize advantages
-            advantages = (advantages - np.mean(advantages)) / np.std(advantages)
-
-            # Flatten arrays
-            states        = np.array(states).reshape((-1, *input_shape))       # [T x N, 84, 84, 4]
-            taken_actions = np.array(taken_actions).reshape((-1, num_actions)) # [T x N, 3]
-            returns       = returns.flatten()                                  # [T x N]
-            advantages    = advantages.flatten()                               # [T X N]
-
-            # Train for some number of epochs
-            model.update_old_policy() # θ_old <- θ
-            for _ in range(num_epochs):
+        # Train for some number of epochs
+        model.update_old_policy() # θ_old <- θ
+        for _ in range(num_epochs):
+            num_samples = len(states)
+            indices = np.arange(num_samples)
+            np.random.shuffle(indices)
+            for i in range(int(np.ceil(num_samples / batch_size))):
                 # Evaluate model
                 if model.step_idx % eval_interval == 0:
                     print("Running evaluation...")
@@ -159,18 +167,54 @@ def train():
                 if model.step_idx % save_interval == 0:
                     model.save()
 
-                # Sample mini-batch randomly and train
-                mb_idx = np.random.choice(len(states), batch_size, replace=False)
+                # Sample mini-batch randomly
+                begin = i * batch_size
+                end   = begin + batch_size
+                if end > num_samples:
+                    end = None
+                mb_idx = indices[begin:end]
 
                 # Optimize network
-                print("Training (step {})...".format(model.step_idx))
                 model.train(states[mb_idx], taken_actions[mb_idx],
-                            returns[mb_idx], advantages[mb_idx],
-                            learning_rate=lr_scheduler)
-    
-    # Training complete, evaluate model
-    avg_reward = evaluate(model, test_env, discount_factor, frame_stack_size, make_video=True)
-    print("Model achieved a final reward of:", avg_reward)
+                            returns[mb_idx], advantages[mb_idx])
+
 
 if __name__ == "__main__":
-    train()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Trains an agent in a the CarRacing-v0 environment with proximal policy optimization")
+
+    # Hyper parameters
+    parser.add_argument("--initial_lr", type=float, default=3e-4)
+    parser.add_argument("--discount_factor", type=float, default=0.99)
+    parser.add_argument("--gae_lambda", type=float, default=0.95)
+    parser.add_argument("--ppo_epsilon", type=float, default=0.2)
+    parser.add_argument("--value_scale", type=float, default=0.5)
+    parser.add_argument("--entropy_scale", type=float, default=0.01)
+    parser.add_argument("--horizon", type=int, default=128)
+    parser.add_argument("--num_epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--num_envs", type=int, default=8)
+
+    # Training vars
+    parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--save_interval", type=int, default=1000)
+    parser.add_argument("--eval_interval", type=int, default=200)
+    parser.add_argument("--record_episodes", type=bool, default=True)
+    parser.add_argument("-restart", action="store_true")
+
+    params = vars(parser.parse_args())
+
+    # Remove non-hyperparameters
+    model_name = params["model_name"]; del params["model_name"]
+    save_interval = params["save_interval"]; del params["save_interval"]
+    eval_interval = params["eval_interval"]; del params["eval_interval"]
+    record_episodes = params["record_episodes"]; del params["record_episodes"]
+    restart = params["restart"]; del params["restart"]
+
+    train(params, model_name,
+            save_interval=save_interval,
+            eval_interval=eval_interval,
+            record_episodes=record_episodes,
+            restart=restart)
+

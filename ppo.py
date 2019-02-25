@@ -45,7 +45,7 @@ class PolicyGraph():
                                                kernel_initializer=tf.initializers.variance_scaling(scale=initial_mean_factor),
                                                name="action_mean")
             self.action_mean = action_min + ((self.action_mean + 1) / 2) * (action_max - action_min)
-            self.action_logstd = tf.get_variable("action_logstd", [num_actions], initializer=tf.zeros_initializer())
+            self.action_logstd = tf.Variable(np.full((num_actions), np.log(0.4), dtype=np.float32), name="action_logstd")
 
             # Value branch V(s_t; θ)
             self.value = tf.layers.dense(self.shared_features, 1, activation=None, name="value")
@@ -165,9 +165,9 @@ class PPO():
         tf.summary.scalar("loss", self.loss)
         for i in range(num_actions):
             tf.summary.scalar("taken_actions_{}".format(i), tf.reduce_mean(self.taken_actions[:, i]))
-            tf.summary.scalar("prob_ratio_{}".format(i), tf.reduce_mean(self.prob_ratio[i]))
             tf.summary.scalar("policy.action_mean_{}".format(i), tf.reduce_mean(self.policy.action_mean[:, i]))
             tf.summary.scalar("policy.action_std_{}".format(i), tf.reduce_mean(tf.exp(self.policy.action_logstd[i])))
+        tf.summary.scalar("prob_ratio", tf.reduce_mean(self.prob_ratio))
         tf.summary.scalar("returns", tf.reduce_mean(self.returns))
         tf.summary.scalar("advantage", tf.reduce_mean(self.advantage))
         tf.summary.scalar("learning_rate", tf.reduce_mean(self.learning_rate))
