@@ -134,8 +134,8 @@ def train(params, model_name, save_interval=1000, eval_interval=200, record_epis
         last_values = np.squeeze(model.predict(states_last)[1], axis=-1) # [N]
         
         advantages = compute_gae(rewards, values, last_values, dones, discount_factor, gae_lambda)
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         returns = advantages + values
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
         # Flatten arrays
         states        = np.array(states).reshape((-1, *input_shape))       # [T x N, 84, 84, 4]
